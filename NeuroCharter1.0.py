@@ -4504,8 +4504,8 @@ t1 = time.time()
 #                display_graph_windows=False, display_graph_pdf=True, categorical_extra_divisor=2,
 #                data_file_has_titles=True, data_file_has_brief_titles=True)
 
-# study6 = Study('QueryN.csv', "query", previous_study_data_file="NeuroCharterNet.nsr", start_time=t1)
-# from NeuroCharter import *
+Study('QueryN.csv', "query", previous_study_data_file="NeuroCharterNet.nsr", start_time=t1)
+
 Study('dataNT.csv', 'validation run', num_outputs=4, data_partition=(65, 15),
       tolerance=0.001, learning_rate=0.4, maximum_epochs=3000,
       adapt_learning_rate=False, annealing_value=2000,
