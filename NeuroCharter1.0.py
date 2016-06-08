@@ -344,6 +344,25 @@ class NeuralNetwork:
             _b.append(bias[0])
         return _weights_without_bias, _b
 
+    def clone(self):
+        """
+        Clones the ANN
+        @return: a copy of the cloned ANN
+        """
+        cloned = NeuralNetwork(self.num_inputs, self._num_hidden, self._num_outputs,
+                               activation_functions=self.activation_functions,
+                               learning_rate=self.learning_rate, parent_study=self.parent_study,
+                               categorical_extra_divisor=self.categorical_extra_divisor, out_var_bool=None)
+        for h in range(self._num_hidden):
+            cloned.hidden_layer.neurons[h].bias = self.hidden_layer.neurons[h].bias
+            for i in range(self.num_inputs):
+                cloned.hidden_layer.neurons[h].weights[i] = self.hidden_layer.neurons[h].weights[i]
+        for h in range(self._num_outputs):
+            cloned.output_layer.neurons[h].bias = self.output_layer.neurons[h].bias
+            for i in range(self._num_hidden):
+                cloned.output_layer.neurons[h].weights[i] = self.output_layer.neurons[h].weights[i]
+        return cloned
+
     class NeuronLayer:
         """
         Adding a Neuron Layer
@@ -1584,7 +1603,7 @@ class Study:
 
     """
 
-    def __init__(self, data_file, purpose='validation run', num_outputs=1,
+    def __init__(self, data_file, purpose='cross validation', num_outputs=1,
                  data_file_has_titles=False, data_file_has_brief_titles=False,
                  activation_functions=(SIGMOID, SIGMOID),
                  tolerance=0.001, maximum_epochs=1000000, learning_rate=0.4, data_partition=(70, 20),
@@ -1598,11 +1617,16 @@ class Study:
 
         @param data_file: the input data file in csv format
         @param purpose: purpose of the study,
-                    'query': to query about data for a saved ANN (prediction)
-                    'full run': to run all the data as training set, no validation, and no testing
-                    'validation run': to run some of the data as training, some as validation,
-                                      and some as testing. This is the Default
-                    'optimization': to do similar to the 'validation run', but before that it searched the
+                    'query', or 'q': to query about data for a saved ANN (prediction)
+                    'cross validation', or 'cv': to train some of the data while checking the errors of the validation dataset
+                                        if the error of the latter starts to increase instead of decrease,
+                                        the training will stop as it will be considered a n evidence of overfitting.
+                                        This is the Default purpose
+                    'full run', or 'fr': to run all the data as training set, no validation, and no testing
+                    'sequential validation', or 'sv': to run some of the data as training, some as validation,
+                                      and some as testing. the validation starts, then traing for maximum of double
+                                      the convergence epochs of the training set, the the testing set.
+                    'optimization', or 'op': to do similar to the 'validation run', but before that it searched the
                                       best structure and best activation functions. This is the slowest one.
 
         @param num_outputs: number of output variables of the datafile, Default = 1
@@ -1649,7 +1673,7 @@ class Study:
         self.num_inputs = 0
         self.num_outputs = 0
 
-        if purpose == 'query':
+        if purpose.lower() in ['query', 'q']:
             self.previous_study_data_file = previous_study_data_file
             self.temporary = {}
             self.data_style = None
@@ -1669,7 +1693,7 @@ class Study:
             self.layer_size_range = layer_size_range
             self.start_time = start_time if start_time != 0 else time.time()
 
-            self.purpose = purpose
+            self.purpose = purpose.lower()
             self.tolerance = tolerance
             self.maximum_epochs = maximum_epochs
             self.basic_learning_rate = learning_rate
@@ -1815,9 +1839,14 @@ class Study:
 
         """
         Runs one of the Study modes
+            'cross validation': to train some of the data while checking the errors of the validation dataset
+                                if the error of the latter starts to increase instead of decrese,
+                                the training will stop as it will be considered a n evidence of over fitting.
+                                This is the Default purpose
             'full run': to run all the data as training set, no validation, and no testing
-            'validation run': to run some of the data as training, some as validation,
-                                and some as testing. This is the Default
+            'sequential validation': to run some of the data as training, some as validation,
+                                and some as testing. the validation starts, then traing for maximum of double
+                                the convergence epochs of the training set, the the testing set.
             'optimization': to do similar to the 'validation run', but before that it searched the
                                 best structure and best activation functions. This is the slowest one.
         """
@@ -1909,6 +1938,74 @@ class Study:
             # # Now find the relative importance
             # relative_importance_100, relative_importance_negative = self.separate_relative_importance()
             # matrix_of_sum_of_errors = [ecl[0], sum(ecl[2]), sum(map((lambda x: x ** 0.5), ecl[2]))]
+            # printing to console
+            print "Testing data results (", str(len(partitioned_data[2])), ") data points"
+            study.print_to_console(correlation_coefficients, ecl,
+                                   matrix_of_sum_of_errors, stopping_epoch, study.maximum_epochs)
+            # optional_errors.append(copy.deepcopy(error_list))
+            optional_errors.append(error_list)
+            graphing_data_collection.append(outputs_to_graph)
+
+            # Storing weights and biases
+            study.save_to_file(0)  # self.store_network_weights(ann)
+
+            # output to file
+            study.prepare_output_file(error_list, stopping_epoch, study.tolerance, correlation_coefficients,
+                                      matrix_of_sum_of_errors, ecl,
+                                      relative_importance_100, relative_importance_negative, clear_file_state=False)
+            # GRAPHING
+            # self.graph_results(error_list, outputs_to_graph, optional_errors)
+            # to copy only the outputs of the partitioned data to separate vld, tst, and trn points
+            partitioned_data_outs = [[], [], []]
+            for i, dta in enumerate(partitioned_data):
+                for lne in dta:
+                    partitioned_data_outs[i].append(lne[1])
+            study.network_save()
+            study.graph_results(error_list, graphing_data_collection, optional_errors, partitioned_data_outs,
+                                study.start_time)
+
+            pass
+
+        def study_cross_validation(study):
+            # preparing all
+            """
+            to run some of the data as training, some as validation,
+                                and some as testing. This is the Default
+            @param study: is the Study Class instance
+            """
+            study.ann = study.create_net()
+            optional_errors = []
+            partitioned_data = study.perform_data_partition(study.data_partition[0], study.data_partition[1])
+            graphing_data_collection = []
+
+            # training
+            # for the cross validation, we will start by the training data
+            study.normalized_data = partitioned_data[0]
+            error_list, stopping_epoch, correlation_coefficients, outputs_to_graph, time_elapsed, cv_error = \
+                study.train_net(training_title='Training and validating selected network',
+                                cross_validation=True, validation_data_set=partitioned_data[1])
+
+            # ecl = errors_collection
+            ecl = study.ann.calculate_total_error(study.normalized_data)
+            matrix_of_sum_of_errors = [ecl[0], sum(ecl[2]), sum(map((lambda x: x ** 0.5), ecl[2]))]
+            graphing_data_collection.append(outputs_to_graph)
+            # printing to console
+            print "Training data results (", str(len(partitioned_data[0])), ") data points"
+            study.print_to_console(correlation_coefficients, ecl,
+                                   matrix_of_sum_of_errors, stopping_epoch, study.maximum_epochs)
+
+            optional_errors.append(cv_error[1])
+            optional_errors.append(error_list)
+
+            # Now find the relative importance
+            relative_importance_100, relative_importance_negative = study.separate_relative_importance()
+
+            # testing
+            study.normalized_data = partitioned_data[2]
+            error_list, stopping_epoch, correlation_coefficients, outputs_to_graph, time_elapsed = \
+                study.train_net(training_title='Running Testing Stage...')
+            ecl = study.ann.calculate_total_error(study.normalized_data)
+
             # printing to console
             print "Testing data results (", str(len(partitioned_data[2])), ") data points"
             study.print_to_console(correlation_coefficients, ecl,
@@ -2121,12 +2218,17 @@ class Study:
                                 study.start_time)
             pass
 
-        if self.purpose == 'full run':
+        if self.purpose in ['fr', 'full run']:
             study_full_run(self)
-        elif self.purpose == 'validation run':
+        elif self.purpose in ['sv', 'sequential validation']:
             study_validation_run(self)
-        elif self.purpose == 'optimization':
+        elif self.purpose in ['op', 'optimization']:
             study_optimization_run(self)
+        elif self.purpose in ['cv', 'cross validation']:
+            study_cross_validation(self)
+        else:
+            print 'Error\nStudy purpose not recognized'
+            exit()
 
         print "\nElapsed time throughout the study: ", elapsed_time(self.start_time, time.time())
 
@@ -2589,9 +2691,10 @@ class Study:
         return mxv
 
     def train_net(self, other_ann=None, temp_maximum_epochs=None,
-                  training_title='Training the ANN'):
+                  training_title='Training the ANN', cross_validation=False, validation_data_set=None):
         """
         A procedure to train an ANN
+        @param cross_validation: Boolean, True if the mode of the study requires cross validation, False by default
         @param other_ann: if we need to train an ANN other than the main network of the study, we mention its name here
                             The main ANN of the study is referenced as self.ann
         @param temp_maximum_epochs: if we need to change  the default max epochs during training.
@@ -2605,37 +2708,42 @@ class Study:
                     >the elapsed training time)
         """
 
-        def train_line(study, training_inputs, training_outputs, other_ann=None):
+        def train_line(study, training_inputs_l, training_outputs_l, other_ann_l=None):
             """
             # Uses online learning, i.e. updating the weights after each training case
             @param study: the parent study
-            @param training_inputs: a list of normalized values to train as inputs
-            @param training_outputs: a list of normalized values to train as outputs
-            @param other_ann: if we want to train lines for an ANN other than the default, then tipe its name here
+            @param training_inputs_l: a list of normalized values to train as inputs
+            @param training_outputs_l: a list of normalized values to train as outputs
+            @param other_ann_l: if we want to train lines for an ANN other than the default, then tipe its name here
             """
             # 0. Perform Feed Farward
             # ann._inputs.append(training_inputs)
             # ann._output_targets.append(training_outputs)
-            try:
-                ann = study.ann
-            except:
-                ann = other_ann
+            if other_ann_l is None:
+                ann_l = study.ann
+            else:
+                ann_l = other_ann_l
 
-            ann.feed_forward(training_inputs)
+            # try:
+            #     ann = study.ann
+            # except:
+            #     ann = other_ann_l
+
+            ann_l.feed_forward(training_inputs_l)
 
             # 1. Output neuron deltas
             # partial derivatives errors with respect to output neuron total net input
-            output_neurons_error = [0] * len(ann.output_layer.neurons)
+            output_neurons_error = [0] * len(ann_l.output_layer.neurons)
             # speedup variable
-            output_layer_neurons = ann.output_layer.neurons
-            for o in range(len(ann.output_layer.neurons)):
+            output_layer_neurons = ann_l.output_layer.neurons
+            for o in range(len(ann_l.output_layer.neurons)):
                 # ∂E/∂zⱼ
-                output_neurons_error[o] = output_layer_neurons[o].calc_delta(training_outputs[o])
+                output_neurons_error[o] = output_layer_neurons[o].calc_delta(training_outputs_l[o])
 
             # 2. Hidden neuron deltas
-            hidden_neurons_delta = [0] * len(ann.hidden_layer.neurons)
+            hidden_neurons_delta = [0] * len(ann_l.hidden_layer.neurons)
 
-            hidden_layer_neurons = ann.hidden_layer.neurons
+            hidden_layer_neurons = ann_l.hidden_layer.neurons
             rng_output_layer_neurons = range(len(output_layer_neurons))
             for h, n in enumerate(hidden_layer_neurons):
 
@@ -2654,27 +2762,30 @@ class Study:
             for o in rng_output_layer_neurons:
                 # update bias NESR
                 updated_weight = output_neurons_error[o]
-                output_layer_neurons[o].bias -= ann.learning_rate * updated_weight
+                output_layer_neurons[o].bias -= ann_l.learning_rate * updated_weight
                 # Update weights here
-                for w_ho in range(len(ann.output_layer.neurons[o].weights)):
+                for w_ho in range(len(ann_l.output_layer.neurons[o].weights)):
                     # ∂Eⱼ/∂wᵢⱼ = ∂E/∂zⱼ * ∂zⱼ/∂wᵢⱼ
                     updated_weight = output_neurons_error[o] * output_layer_neurons[o].neuron_net_input(w_ho)
 
                     # Δw = α * ∂Eⱼ/∂wᵢ
-                    output_layer_neurons[o].weights[w_ho] -= ann.learning_rate * updated_weight
+                    output_layer_neurons[o].weights[w_ho] -= ann_l.learning_rate * updated_weight
 
             # 4. Update hidden neuron weights
-            for h in range(len(ann.hidden_layer.neurons)):
+            for h in range(len(ann_l.hidden_layer.neurons)):
                 # update bias NESR
                 updated_weight = hidden_neurons_delta[h]
-                hidden_layer_neurons[h].bias -= ann.learning_rate * updated_weight
+                hidden_layer_neurons[h].bias -= ann_l.learning_rate * updated_weight
                 # Update weights here
-                for w_ih in range(len(ann.hidden_layer.neurons[h].weights)):
+                for w_ih in range(len(ann_l.hidden_layer.neurons[h].weights)):
                     # ∂Eⱼ/∂wᵢ = ∂E/∂zⱼ * ∂zⱼ/∂wᵢ
                     updated_weight = hidden_neurons_delta[h] * hidden_layer_neurons[h].neuron_net_input(w_ih)
 
                     # Δw = α * ∂Eⱼ/∂wᵢ
-                    hidden_layer_neurons[h].weights[w_ih] -= ann.learning_rate * updated_weight
+                    hidden_layer_neurons[h].weights[w_ih] -= ann_l.learning_rate * updated_weight
+
+        # ====================================================================================
+        cv_error = [[], []]
 
         print "\n", training_title, ", \n ...showing number of epochs till now"
         t1 = time.time()
@@ -2702,6 +2813,34 @@ class Study:
                 train_line(self, training_inputs, training_outputs, other_ann)
 
             current_error = ann.calculate_total_error(data)[0]
+
+            # ===========================================================================================
+            # If the study mode is 'cross validation', then we should calculate the validation set's error
+
+            if cross_validation:
+                # cloned_ann = ann.clone()
+                # validation error
+                # v_error = cloned_ann.calculate_total_error(validation_data_set)[0]
+                v_error = self.ann.calculate_total_error(validation_data_set)[0]
+                cv_error[0].append(current_error)
+                cv_error[1].append(v_error)
+
+                if epoch > 5:
+                    if v_error > cv_error[1][-2]:
+                        if cv_error[1][-2] > cv_error[1][-3]:
+                            if cv_error[1][-3] > cv_error[1][-4]:
+                                # The ANN will starts over fitting, then stop training
+                                for ijk in range(-10, 0):
+                                    print cv_error[1][ijk],
+
+                                print '\nStopped as the ANN starts to over fit'
+                                break
+
+
+
+                pass
+            # ===========================================================================================
+
             cost_slope = 0
             if epoch > 2:
                 # max_learning_rate = 0.95
@@ -2785,8 +2924,12 @@ class Study:
                 r = 0.000000079797979797979
 
             r_coefficient_matrix.append(r)
+        if cross_validation:
+            # in cross validation mode, we add validation and test errors
+            return error_list, reached_epochs, r_coefficient_matrix, outputs, t2 - t1, cv_error
+        else:
+            return error_list, reached_epochs, r_coefficient_matrix, outputs, t2 - t1
 
-        return error_list, reached_epochs, r_coefficient_matrix, outputs, t2 - t1
 
     def get_network_weights(self, other_ann=None):
         """
@@ -4504,10 +4647,10 @@ t1 = time.time()
 #                display_graph_windows=False, display_graph_pdf=True, categorical_extra_divisor=2,
 #                data_file_has_titles=True, data_file_has_brief_titles=True)
 
-# Study('QueryN.csv', "query", previous_study_data_file="NeuroCharterNet.nsr", start_time=t1)
-
-Study('dataNT.csv', 'validation run', num_outputs=4, data_partition=(65, 15),
-      tolerance=0.001, learning_rate=0.4, maximum_epochs=3000,
+# study6 = Study('QueryN.csv', "query", previous_study_data_file="NeuroCharterNet.nsr", start_time=t1)
+# from NeuroCharter import *
+Study('dataNT.csv', 'cross validation', num_outputs=4, data_partition=(65, 15),
+      tolerance=0.0001, learning_rate=0.4, maximum_epochs=800,
       adapt_learning_rate=False, annealing_value=2000,
-      display_graph_windows=False, display_graph_pdf=True,
+      display_graph_windows=True, display_graph_pdf=False,
       data_file_has_titles=True, data_file_has_brief_titles=True)
