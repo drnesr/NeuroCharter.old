@@ -715,7 +715,8 @@ class PlotNeuralNetwork:
     http://stackoverflow.com/questions/29888233/how-to-visualize-a-neural-network
     """
     def __init__(self, labels, horizontal__distance_between_layers=10., vertical__distance_between_neurons=2.,
-                 neuron_radius=0.5, number_of_neurons_in_widest_layer=9):
+                 neuron_radius=0.5, number_of_neurons_in_widest_layer=9, numeric_categoric_list=None,
+                 categoric_is_lighter=True):
         """
         Plots a neural network with varying synapsys widths according to weights
         @param labels: A list contains 2 elements, the fist is a list of all labels, the second is NumInputs
@@ -723,6 +724,16 @@ class PlotNeuralNetwork:
         @param vertical__distance_between_neurons: as written
         @param neuron_radius: the radius of the circle representing the neuron
         @param number_of_neurons_in_widest_layer: as written
+        @param numeric_categoric_list: adding a list of two lists, the first list shows boolean representation
+                    of variables types; for example [True, True, False, False], means the first two neurons represent
+                    Numeric values, while the last two are categoric.
+                    The first sub-list is for inputs, the other for outputs.
+                    The gross list is on the form [[True, True, False, False], [False, False, False, True]]
+                    This list is optional, the default is None.
+                    If left blank, all the neuron will be colored the same color, other wise, Categoric neurons
+                    will be lighter or darker depending on the following parameter
+        @param categoric_is_lighter: if True, the categoric neurons color will be lighter than numeric ones,
+                    and vise-versa
         """
         self.layers = []
         self.biases = []
@@ -732,6 +743,8 @@ class PlotNeuralNetwork:
         self.widest_layer = number_of_neurons_in_widest_layer
         self.labels = labels  # A list contains 2 elements, the fist is a list of all labels, the second is NumInputs
         self.highest_neuron = 0
+        self.numeric_categoric_list = numeric_categoric_list
+        self.categoric_is_lighter = categoric_is_lighter
 
     def add_layer(self, number_of_neurons, layer_type='any', weights=None):
         """
@@ -755,10 +768,12 @@ class PlotNeuralNetwork:
         bias = to_layer.PlotBias(self, from_layer, to_layer, weights, layer_type='bias')
         self.biases.append(bias)
 
-    def draw(self):
+    def draw(self, inputs_label="Inputs Layer", outputs_label="Outputs Layer"):
         """
         Draws the whole network depending on its components
         It will recall similar method from the subclasses
+        @param inputs_label: The label that will appear to the left of the diagram corresponding to the inputs layer
+        @param outputs_label: The label that will appear to the right of the diagram corresponding to the outputs layer
         """
         for layer in self.layers:
             layer.draw()
@@ -782,14 +797,14 @@ class PlotNeuralNetwork:
         # max_yz = (self.vertical__distance + self.neuron_radius) * max(n.number_of_neurons for n in self.layers)
         max_yz = self.highest_neuron
         plt.axis([-3, 33, -1, max_yz])  # plt.axis([-1, max_x, -1, 31])
-        plt.ylabel('Normalized Inputs Layer')
+        plt.ylabel(inputs_label)
 
         frame1 = plt.gca()
         frame1.set_xticklabels([])  # frame1.axes.get_xaxis().set_visible(False)
         frame1.set_yticklabels([])
 
         ax2 = plt.twinx()
-        ax2.set_ylabel('Normalized Ouputs Layer')  # ax2.set_xlabel(r"Modified x-axis: $1/(1+X)$")
+        ax2.set_ylabel(outputs_label)  # ax2.set_xlabel(r"Modified x-axis: $1/(1+X)$")
         ax2.set_yticklabels([])
 
         # plt.savefig('nesr.png')
@@ -816,10 +831,15 @@ class PlotNeuralNetwork:
             self.neurons = self.__initialize_neurons(number_of_neurons)
             self.layer_type = layer_type
             self.neuron_labels = [''] * number_of_neurons
+            self.neron_types = [True] * number_of_neurons  # True means Numeric
             if layer_type == 'inputs':
                 self.neuron_labels = self.parent_net.labels[0][:self.parent_net.labels[1]]
+                if self.parent_net.numeric_categoric_list is not None:
+                    self.neron_types = self.parent_net.numeric_categoric_list[0]
             elif layer_type == 'outputs':
                 self.neuron_labels = self.parent_net.labels[0][self.parent_net.labels[1]:]
+                if self.parent_net.numeric_categoric_list is not None:
+                    self.neron_types = self.parent_net.numeric_categoric_list[1]
 
         def __initialize_neurons(self, number_of_neurons):
             """
@@ -896,7 +916,7 @@ class PlotNeuralNetwork:
                         previous_layer_neuron = self.previous_layer.neurons[previous_layer_neuron_index]
                         weight = self.previous_layer.weights[this_layer_neuron_index, previous_layer_neuron_index]
                         self.__line_between_two_neurons(neuron, previous_layer_neuron, weight)
-                neuron.draw(self.neuron_labels[this_layer_neuron_index])
+                neuron.draw(self.neuron_labels[this_layer_neuron_index], self.neron_types[this_layer_neuron_index])
 
         class PlotBias:
             """
@@ -962,16 +982,19 @@ class PlotNeuralNetwork:
                 self.xz = xz
                 self.mother_layer = mother_layer
 
-            def draw(self, name):
+            def draw(self, name, n_type=True):
                 """
                 Draws a circle for the neuron
+                @param n_type: the type of the neuron, True if Numeric, False if Categoric
                 @param name: the name of the variable associated to the neuron
                 """
                 layer = self.mother_layer.layer_type
                 col = 'w'
                 edg = 'b'
                 if layer == "inputs":
-                    col = 'gold'
+                    col = 'gold' if n_type else "moccasin"
+                    if not n_type and not self.mother_layer.parent_net.categoric_is_lighter:
+                        col = 'goldenrod'
                     edg = 'navy'
                     xx = self.xz - 2
                     yy = self.yz - 0.25
@@ -980,7 +1003,9 @@ class PlotNeuralNetwork:
                     col = 'grey'
                     edg = 'black'
                 elif layer == 'outputs':
-                    col = 'lime'
+                    col = 'lime' if n_type else "aquamarine"
+                    if not n_type and not self.mother_layer.parent_net.categoric_is_lighter:
+                        col = 'limegreen'
                     edg = 'green'
                     xx = self.xz + 1
                     yy = self.yz - 0.25
@@ -1029,6 +1054,7 @@ class Data:
         self.source_data_file = source_file
         self.num_outputs = num_outputs
         self.data_style = data_style
+        self.basic_data_style = []
         self.has_titles = has_titles
         self.has_briefs = has_briefs
         self.titles = []
@@ -1112,17 +1138,22 @@ class Data:
             # Identifying data types
             input_types = ['Numeric'] * self.num_inputs
             output_types = ['Numeric'] * self.num_outputs
+            bool_input_types = [True] * self.num_inputs
+            bool_output_types = [True] * self.num_outputs
             for i in range(self.num_inputs):
                 for cell in input_variables_data[i]:
                     if isinstance(cell, str):
                         input_types[i] = 'Categorical'
+                        bool_input_types[i] = False
                         break
             for i in range(self.num_outputs):
                 for cell in output_variables_data[i]:
                     if isinstance(cell, str):
                         output_types[i] = 'Categorical'
+                        bool_output_types[i] = False
                         break
 
+            self.basic_data_style =[bool_input_types, bool_output_types]
             # var1 = Variable(input_variables_data[i], 'Input' + str(0))
             self.input_variables = [self.Variable(input_variables_data[i], self.classified_titles[0][i],
                                                   input_types[i], str(self.classified_briefs[0][i]))
@@ -2318,6 +2349,8 @@ class Study:
             return self.source_data.get_data_style(required_style='vars')[:num_inputs]
         elif style == 'avg':
             return self.source_data.get_mean_row()
+        elif style == 'original boolean':
+            return self.source_data.basic_data_style
 
     def get_relative_importance(self, method='Advance Corrected'):
         """
@@ -3308,7 +3341,8 @@ class Study:
             plt_net = PlotNeuralNetwork(labels, horizontal__distance_between_layers=15,
                                         vertical__distance_between_neurons=2,
                                         neuron_radius=0.5,
-                                        number_of_neurons_in_widest_layer=max(structure) + 3)  # + 3
+                                        number_of_neurons_in_widest_layer=max(structure) + 3,
+                                        numeric_categoric_list=var_types_bool)
 
             ann = self.ann
             w_i_h = ann.get_weights(I_H)
@@ -3336,7 +3370,7 @@ class Study:
             # plt.imshow(Rotated_Plot)  #, cmap=plt.cm.gray)
             # plt.axis('off')
 
-            plt_net.draw()
+            plt_net.draw(inputs_label="Normalized Inputs Layer", outputs_label="Normalized Outputs Layer")
             # plt.tight_layout()
             plt.interactive(False)
             plt.suptitle(pages_titles[figure_number], fontsize=25, weight='bold')
@@ -3415,9 +3449,12 @@ class Study:
 
             labels = [self.source_data.briefs, self.source_data.num_inputs]
 
+
             plt_net = PlotNeuralNetwork(labels, horizontal__distance_between_layers=15,
                                         vertical__distance_between_neurons=2,
-                                        neuron_radius=0.5, number_of_neurons_in_widest_layer=max(structure) + 3)
+                                        neuron_radius=0.5, number_of_neurons_in_widest_layer=max(structure) + 3,
+                                        numeric_categoric_list=self.get_variables_info('original boolean'),
+                                        categoric_is_lighter=False)
 
             var_map, var_bool = self.get_variables_info('loc'), self.get_variables_info('bool')
             w12 = consolidate_weights(w12, var_map, var_bool)
@@ -3439,7 +3476,7 @@ class Study:
             plt_net.add_bias(0, 1, bias12)
             plt_net.add_bias(1, 2, bias23)
 
-            plt_net.draw()
+            plt_net.draw(inputs_label="De-normalized Inputs Layer", outputs_label="De-normalized Outputs Layer")
             # plt.tight_layout()
             plt.interactive(False)
             plt.suptitle(pages_titles[figure_number], fontsize=25, weight='bold')
@@ -4161,6 +4198,7 @@ class Study:
             pass
 
         # this for loop to partition the routine to several parts
+        w12, w23, b12, b23, structure = 0, 0, 0, 0, 0
         for section in range(8):
             if section == 0:
                 # definitions and basic information
@@ -4648,7 +4686,7 @@ t1 = time.time()
 #                data_file_has_titles=True, data_file_has_brief_titles=True)
 
 # study6 = Study('QueryN.csv', "query", previous_study_data_file="NeuroCharterNet.nsr", start_time=t1)
-# from NeuroCharter import *
+
 Study('dataNT.csv', 'cross validation', num_outputs=4, data_partition=(65, 15),
       tolerance=0.0001, learning_rate=0.4, maximum_epochs=800,
       adapt_learning_rate=False, annealing_value=2000,
